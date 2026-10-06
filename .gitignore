@@ -1,0 +1,16 @@
+# Build output and binaries
+build/
+*.exe
+*.o
+*.obj
+
+# Logs and local runtime data
+logs/
+*.log
+
+# Credentials and local environment: never commit
+.env
+.env.*
+*.env.local
+*.key
+*.pem
