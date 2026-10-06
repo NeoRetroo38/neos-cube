@@ -48,8 +48,17 @@ El cliente de producto vive en el repo público `choisys`.
 ```
 
 Flags: `-std=c++17 -Wall -Wextra -Wpedantic`. `cube.hpp` y `tests/core-tests.cpp` son C++17 estándar y
-compilan en cualquier plataforma. **`server.cpp` usa Winsock y `gmtime_s` (solo Windows)**; el port a
-POSIX (sockets, `gmtime_r`, `Makefile`/`build.sh`) está pendiente, para macOS y Linux/servidor.
+compilan en cualquier plataforma. `server.cpp` es portable: una capa de plataforma pequeña (`Socket`,
+`networkStart`, `closeSocket`...) separa Winsock de los sockets POSIX.
+
+```sh
+make test       # macOS/Linux: tests del núcleo
+make smoke      # macOS/Linux: servicio de extremo a extremo (curl + openssl)
+./run.sh        # macOS/Linux: arranca el servicio
+```
+
+Mantén el servicio portable: no uses APIs de Windows ni de POSIX fuera de esa capa. El port POSIX aún no se
+ha compilado en macOS/Linux reales (ver `README.md`): `make test smoke` en el Mac es la verificación pendiente.
 
 ## Definición de terminado
 

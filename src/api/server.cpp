@@ -1,9 +1,22 @@
+// NEO_FORCE_POSIX lets the POSIX branch be syntax-checked on a Windows toolchain.
+#if defined(_WIN32) && !defined(NEO_FORCE_POSIX)
+#define NEO_WINDOWS 1
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#else
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -29,6 +42,48 @@ constexpr std::size_t maxBody = 8192;
 constexpr std::size_t maxSessions = 256;
 constexpr auto requestDeadline = std::chrono::seconds(2);
 constexpr auto sessionTtl = std::chrono::minutes(30);
+
+// Thin platform layer: everything else in this file is portable.
+#ifdef NEO_WINDOWS
+using Socket = SOCKET;
+using PeerSize = int;
+using IoSize = int;
+constexpr Socket invalidSocket = INVALID_SOCKET;
+constexpr int sendFlags = 0;
+inline bool networkStart() { WSADATA winsock{}; return WSAStartup(MAKEWORD(2, 2), &winsock) == 0; }
+inline void networkStop() { WSACleanup(); }
+inline void closeSocket(Socket handle) { closesocket(handle); }
+inline void shutdownSocket(Socket handle) { shutdown(handle, SD_BOTH); }
+inline bool setNonBlocking(Socket handle) { u_long enabled = 1; return ioctlsocket(handle, FIONBIO, &enabled) == 0; }
+// Windows: refuse to share the port with any other process.
+inline bool reserveAddress(Socket handle) {
+    const BOOL exclusive = TRUE;
+    return setsockopt(handle, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive), sizeof(exclusive)) != SOCKET_ERROR;
+}
+#else
+using Socket = int;
+using PeerSize = socklen_t;
+using IoSize = std::size_t;
+constexpr Socket invalidSocket = -1;
+#ifdef MSG_NOSIGNAL
+constexpr int sendFlags = MSG_NOSIGNAL;
+#else
+constexpr int sendFlags = 0;
+#endif
+inline bool networkStart() { signal(SIGPIPE, SIG_IGN); return true; }
+inline void networkStop() {}
+inline void closeSocket(Socket handle) { close(handle); }
+inline void shutdownSocket(Socket handle) { shutdown(handle, SHUT_RDWR); }
+inline bool setNonBlocking(Socket handle) {
+    const int flags = fcntl(handle, F_GETFL, 0);
+    return flags >= 0 && fcntl(handle, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+// POSIX: allow quick restarts; a second live listener on the same address is still refused.
+inline bool reserveAddress(Socket handle) {
+    const int enabled = 1;
+    return setsockopt(handle, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled)) == 0;
+}
+#endif
 
 struct Failure { int status; const char* code; };
 [[noreturn]] void invalid() { throw Failure{400, "INVALID_REQUEST"}; }
@@ -228,26 +283,28 @@ std::string evaluate(const Input& input) {
     return response;
 }
 
-void waitReady(SOCKET socket, bool write, Clock::time_point deadline) {
+void waitReady(Socket socket, bool write, Clock::time_point deadline) {
     const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - Clock::now()).count();
     if (remaining <= 0) throw Failure{408, "REQUEST_TIMEOUT"};
-    timeval wait{static_cast<long>(remaining / 1000000), static_cast<long>(remaining % 1000000)};
+    timeval wait{};
+    wait.tv_sec = static_cast<decltype(wait.tv_sec)>(remaining / 1000000);
+    wait.tv_usec = static_cast<decltype(wait.tv_usec)>(remaining % 1000000);
     fd_set selected;
     FD_ZERO(&selected);
     FD_SET(socket, &selected);
-    const int result = select(0, write ? nullptr : &selected, write ? &selected : nullptr, nullptr, &wait);
+    const int result = select(static_cast<int>(socket) + 1, write ? nullptr : &selected, write ? &selected : nullptr, nullptr, &wait);
     if (result == 0) throw Failure{408, "REQUEST_TIMEOUT"};
-    if (result == SOCKET_ERROR) invalid();
+    if (result < 0) invalid();
 }
-std::string receive(SOCKET socket, Clock::time_point deadline, std::size_t maximum) {
+std::string receive(Socket socket, Clock::time_point deadline, std::size_t maximum) {
     waitReady(socket, false, deadline);
     char buffer[2048];
-    const int length = recv(socket, buffer, static_cast<int>(std::min(maximum, sizeof(buffer))), 0);
+    const auto length = recv(socket, buffer, static_cast<IoSize>(std::min(maximum, sizeof(buffer))), 0);
     if (length <= 0) invalid();
     return {buffer, static_cast<std::size_t>(length)};
 }
 struct Request { std::string method; std::string endpoint; std::map<std::string, std::string> headers; std::string body; std::size_t length = 0; };
-Request headers(SOCKET socket, Clock::time_point deadline) {
+Request headers(Socket socket, Clock::time_point deadline) {
     std::string data;
     std::size_t boundary = std::string::npos;
     while ((boundary = data.find("\r\n\r\n")) == std::string::npos) {
@@ -297,7 +354,7 @@ void authenticate(const Request& request, const std::string& token) {
     const auto auth = request.headers.find("authorization");
     if (request.headers.count("origin") || auth == request.headers.end() || !equalToken(auth->second, "Bearer " + token)) throw Failure{401, "UNAUTHORIZED"};
 }
-void respond(SOCKET socket, int status, const std::string& body) {
+void respond(Socket socket, int status, const std::string& body) {
     const std::string response = "HTTP/1.1 " + std::to_string(status) + " " + (status == 200 ? "OK" : "Error")
         + "\r\nContent-Type: application/json\r\nContent-Length: " + std::to_string(body.size())
         + "\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n\r\n" + body;
@@ -305,7 +362,7 @@ void respond(SOCKET socket, int status, const std::string& body) {
     std::size_t sent = 0;
     while (sent < response.size()) {
         waitReady(socket, true, deadline);
-        const int count = send(socket, response.data() + sent, static_cast<int>(response.size() - sent), 0);
+        const auto count = send(socket, response.data() + sent, static_cast<IoSize>(response.size() - sent), sendFlags);
         if (count <= 0) return;
         sent += static_cast<std::size_t>(count);
     }
@@ -313,12 +370,16 @@ void respond(SOCKET socket, int status, const std::string& body) {
 void log(std::ofstream& stream, const std::string& endpoint, int status, Clock::time_point start, const char* code) {
     const std::time_t now = std::time(nullptr);
     std::tm utc{};
+#ifdef NEO_WINDOWS
     gmtime_s(&utc, &now);
+#else
+    gmtime_r(&now, &utc);
+#endif
     stream << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ") << ' ' << endpoint << ' ' << status << ' '
            << std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count() << "ms " << code << '\n';
     stream.flush();
 }
-void connection(SOCKET socket, const std::string& token, std::ofstream& logs) {
+void connection(Socket socket, const std::string& token, std::ofstream& logs) {
     const auto start = Clock::now();
     std::string endpoint = "other";
     int status = 200;
@@ -358,41 +419,39 @@ int main() {
     try {
         const char* configured = std::getenv("CHOISYS_LOCAL_LOG_DIR");
         const char* profile = std::getenv("USERPROFILE");
+        if (!profile) profile = std::getenv("HOME");
         if (!configured && !profile) throw std::runtime_error("missing log directory");
         const auto directory = configured ? std::filesystem::path(configured) : std::filesystem::path(profile) / "Documents" / "Scenarys" / "logs" / "neo-cube";
         std::filesystem::create_directories(directory);
         logs.open(directory / "service.log", std::ios::app);
         if (!logs) throw std::runtime_error("log unavailable");
     } catch (const std::exception& error) { std::cerr << "Local service logging is unavailable: " << error.what() << '\n'; return 1; }
-    WSADATA winsock{};
-    if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return 1;
-    SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listener == INVALID_SOCKET) { WSACleanup(); return 1; }
-    const BOOL exclusive = TRUE;
-    if (setsockopt(listener, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive), sizeof(exclusive)) == SOCKET_ERROR) { closesocket(listener); WSACleanup(); return 1; }
+    if (!networkStart()) return 1;
+    Socket listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listener == invalidSocket) { networkStop(); return 1; }
+    if (!reserveAddress(listener)) { closeSocket(listener); networkStop(); return 1; }
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_port = htons(port);
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR || listen(listener, 16) == SOCKET_ERROR) {
+    if (bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0 || listen(listener, 16) < 0) {
         std::cerr << "Cannot bind local service at 127.0.0.1:8765.\n";
-        closesocket(listener); WSACleanup(); return 1;
+        closeSocket(listener); networkStop(); return 1;
     }
     std::cout << "neo-cube service ready at 127.0.0.1:8765\n";
     for (;;) {
         sockaddr_in peer{};
-        int size = sizeof(peer);
-        SOCKET client = accept(listener, reinterpret_cast<sockaddr*>(&peer), &size);
-        if (client == INVALID_SOCKET) break;
+        PeerSize size = sizeof(peer);
+        Socket client = accept(listener, reinterpret_cast<sockaddr*>(&peer), &size);
+        if (client == invalidSocket) break;
         if (peer.sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
             // Non-blocking socket plus absolute deadlines bounds partial reads/writes.
-            u_long nonblocking = 1;
-            if (ioctlsocket(client, FIONBIO, &nonblocking) == 0) connection(client, token, logs);
+            if (setNonBlocking(client)) connection(client, token, logs);
         }
-        shutdown(client, SD_BOTH);
-        closesocket(client);
+        shutdownSocket(client);
+        closeSocket(client);
     }
-    closesocket(listener);
-    WSACleanup();
+    closeSocket(listener);
+    networkStop();
     return 1;
 }

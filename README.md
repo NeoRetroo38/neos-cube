@@ -5,7 +5,7 @@ Backend privado de choisys. Esta carpeta vive fuera del repositorio público y n
 ## Componentes
 
 - `src/core/cube.hpp`: copia exacta del motor fuente original, sin cambios de comportamiento.
-- `src/api/server.cpp`: servicio HTTP Windows/Winsock independiente de la GUI; cada sesión HTTP mantiene un `scenarys::Run`.
+- `src/api/server.cpp`: servicio HTTP independiente de la GUI (Winsock en Windows, sockets POSIX en macOS/Linux); cada sesión HTTP mantiene un `scenarys::Run`.
 - `experimental/console.cpp`: consola local que consume el mismo core; no participa en el servicio.
 - `experimental/gui.cpp`: GUI experimental que consume el mismo core; no participa en el servicio.
 - `tests/core-tests.cpp`: pruebas deterministas del comportamiento `Run`/`Session` disponible.
@@ -35,6 +35,29 @@ $env:PATH = 'C:\msys64\mingw64\bin;' + $env:PATH
 Otros targets: `console`, `gui`, `tests` y `all`. GUI añade `-mwindows -lgdiplus`; `tests` compila y ejecuta `neo-cube-tests.exe`. `all` construye servicio, consola, GUI y tests, y falla si las pruebas no pasan.
 
 `run.ps1` lee `CHOISYS_LOCAL_API_TOKEN` del entorno o de `C:\Users\Admin\daemon.codex.env.local`, nunca lo imprime. El archivo local se generó con aleatoriedad criptográfica y ACL para el usuario actual y SYSTEM. No está dentro del repositorio. Se aceptan secretos de 32 a 256 caracteres ASCII imprimibles sin espacios; nunca añadir el valor a argumentos, documentación o bundle móvil. El servicio falla al arrancar si falta una credencial válida o no puede reservar el puerto.
+
+### macOS y Linux
+
+Solo hace falta un compilador C++17 (`c++`, `clang++` o `g++`) y `make`. Sin dependencias ni CMake.
+
+```sh
+make test        # compila y ejecuta los tests del núcleo
+make service     # build/neo-cube-service
+make smoke       # arranca un servicio con token y logs desechables y lo prueba de extremo a extremo (curl + openssl)
+./run.sh         # arranca el servicio
+```
+
+`run.sh` lee `CHOISYS_LOCAL_API_TOKEN` del entorno o del archivo externo `~/.choisys.env.local` (otro
+archivo con `CHOISYS_ENV_FILE`) y nunca lo imprime. El archivo debe crearse en cada equipo con un secreto
+aleatorio de al menos 32 caracteres, por ejemplo `printf 'CHOISYS_LOCAL_API_TOKEN=%s\n' "$(openssl rand -hex 32)" > ~/.choisys.env.local && chmod 600 ~/.choisys.env.local`.
+Los logs van a `~/.local/state/neo-cube` salvo que se fije `CHOISYS_LOCAL_LOG_DIR`. El comportamiento es el
+mismo que en Windows: solo loopback, token Bearer, peticiones acotadas y deadlines.
+
+Estado de verificación del port POSIX: la rama POSIX se comprobó solo con una verificación de sintaxis
+(`-Wall -Wextra -Wpedantic`) sobre cabeceras simuladas, y `tests/smoke-posix.sh` se ejecutó contra el binario de
+Windows. La primera compilación y ejecución reales en macOS/Linux se hacen con `make test smoke` en el propio
+Mac. Hay un workflow de CI (ubuntu y macos) preparado en la rama `claude/ci-posix`; para subirlo, el token de
+`gh` necesita el permiso `workflow` (`gh auth refresh -h github.com -s workflow`).
 
 `CHOISYS_LOCAL_LOG_DIR` permite configurar exclusivamente el directorio de logs; por defecto `%USERPROFILE%\Documents\Scenarys\logs\neo-cube`. El launcher prepara directorio/archivo antes de iniciar el proceso. `service.log` registra fecha UTC, endpoint permitido (`/health`, `/evaluate` u `other`), estado HTTP, milisegundos y código seguro. No registra cuerpos, IDs de sesión, selecciones, tokens ni datos del motor. Rotación de logs pendiente para uso prolongado.
 
