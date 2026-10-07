@@ -1,7 +1,8 @@
 # neos-cube — guía para agentes (Codex, Claude y cualquier otro)
 
-Motor privado **Cubo de Neo** del producto choisys (scenarys S.L.). Repositorio **privado**; el código
-del motor no debe copiarse a ningún repositorio público, frontend, API pública, nube ni documentación.
+Motor C++ **Cubo de Neo** del producto choisys (scenarys S.L.). Este repositorio es **público** y
+se mantiene separado de `choisys`; no dupliques el código del motor en el frontend, la API de producto,
+la nube ni otros repositorios. La ejecución, las credenciales, los logs y los backups siguen siendo locales.
 El cliente de producto vive en el repo público `choisys`.
 
 ## Qué es
