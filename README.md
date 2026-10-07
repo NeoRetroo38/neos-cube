@@ -1,6 +1,9 @@
-# Cubo de Neo local — scenarys S.L.
+# Cubo de Neo — scenarys S.L.
 
-Backend privado de choisys. Esta carpeta vive fuera del repositorio público y no se debe publicar ni copiar a TypeScript, frontend, servicios cloud o repositorios públicos.
+Backend C++ público de choisys. Este repositorio se publica en
+[`NeoRetroo38/neos-cube`](https://github.com/NeoRetroo38/neos-cube), pero el servicio se ejecuta
+de forma local y solo escucha en loopback. La lógica del motor no se duplica en TypeScript,
+frontend ni servicios cloud; las credenciales, logs y backups permanecen locales y privados.
 
 ## Componentes
 
