@@ -5,6 +5,10 @@ Backend C++ público de choisys. Este repositorio se publica en
 de forma local y solo escucha en loopback. La lógica del motor no se duplica en TypeScript,
 frontend ni servicios cloud; las credenciales, logs y backups permanecen locales y privados.
 
+Para la demo con el PC como servidor y el Mac como consola, consulta
+[`docs/PC-HOST-MAC-CONSOLE.md`](docs/PC-HOST-MAC-CONSOLE.md). El puerto del
+motor permanece siempre en loopback.
+
 ## Componentes
 
 - `src/core/cube.hpp`: copia exacta del motor fuente original, sin cambios de comportamiento.
