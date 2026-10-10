@@ -218,6 +218,32 @@ void testMeasurements() {
     assert(noisy.measurements().empty());
 }
 
+// Cubos de usuario: cada fase con su forma; fuera de rango no se mide; límites 1..10.
+void testCustomShape() {
+    scenarys::Run run({{1, 1}, {10, 10}, {2, 5}});
+    run.start();
+    assert(run.select(0, 0));
+    assert(!run.select(10, 0));
+    assert(run.select(9, 9));
+    assert(!run.select(0, 5));
+    assert(run.select(1, 4));
+    assert(run.finished && run.endReason == "COMPLETED");
+    const auto all = run.measurements();
+    assert(all.size() == 3);
+    assert(all[1].row == 10 && all[1].column == 10);
+    assert(all[2].row == 2 && all[2].column == 5);
+
+    assert(scenarys::Run().shape == scenarys::defaultShape());
+    assert(!scenarys::validShape({}));
+    assert(!scenarys::validShape({{0, 3}}));
+    assert(!scenarys::validShape({{3, 11}}));
+    assert(!scenarys::validShape(std::vector<scenarys::PhaseShape>(11, {1, 1})));
+    assert(scenarys::validShape(std::vector<scenarys::PhaseShape>(10, {10, 10})));
+    bool threw = false;
+    try { scenarys::Run bad({{0, 1}}); } catch (const std::invalid_argument&) { threw = true; }
+    assert(threw);
+}
+
 int main() {
     testCompletedRun();
     testMeasurements();
@@ -226,6 +252,7 @@ int main() {
     testOutsideClick();
     testEarlyExit();
     testSessionIsolation();
+    testCustomShape();
 
     std::cout
         << "ALL NEO CUBE TESTS PASSED\n";

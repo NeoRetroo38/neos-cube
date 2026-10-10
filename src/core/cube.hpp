@@ -2,7 +2,9 @@
 
 #include <array>
 #include <cstddef>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace scenarys {
@@ -14,6 +16,27 @@ constexpr std::size_t columnCount = 3;
 static_assert(phaseCount > 0);
 static_assert(rowCount > 0);
 static_assert(columnCount > 0);
+
+// Cubos de usuario: cada fase con su propio alto × ancho, todo entre 1 y maxDimension.
+constexpr std::size_t maxDimension = 10;
+
+struct PhaseShape {
+    std::size_t rows;
+    std::size_t columns;
+    bool operator==(const PhaseShape& other) const { return rows == other.rows && columns == other.columns; }
+};
+
+inline std::vector<PhaseShape> defaultShape() {
+    return std::vector<PhaseShape>(phaseCount, PhaseShape{rowCount, columnCount});
+}
+
+inline bool validShape(const std::vector<PhaseShape>& shape) {
+    if (shape.empty() || shape.size() > maxDimension) return false;
+    for (const auto& phase : shape) {
+        if (phase.rows < 1 || phase.rows > maxDimension || phase.columns < 1 || phase.columns > maxDimension) return false;
+    }
+    return true;
+}
 
 struct Button {
     bool selected = false;
@@ -45,15 +68,17 @@ struct Measurement {
     std::size_t column;
 };
 
-using Row = std::array<Button, columnCount>;
-using Phase = std::array<Row, rowCount>;
-using Cube = std::array<Phase, phaseCount>;
+using Row = std::vector<Button>;
+using Phase = std::vector<Row>;
+using Cube = std::vector<Phase>;
 
 class Run {
 public:
-    Cube cube{};
+    std::vector<PhaseShape> shape;
 
-    std::array<Session, phaseCount> sessions{};
+    Cube cube;
+
+    std::vector<Session> sessions;
 
     std::vector<InputEvent> events;
 
@@ -62,6 +87,14 @@ public:
     bool finished = false;
 
     std::string endReason;
+
+    Run() : Run(defaultShape()) {}
+
+    explicit Run(std::vector<PhaseShape> phases) : shape(std::move(phases)) {
+        if (!validShape(shape)) throw std::invalid_argument("invalid cube shape");
+        sessions.resize(shape.size());
+        for (const auto& phase : shape) cube.emplace_back(phase.rows, Row(phase.columns));
+    }
 
     void start() {
         if (!finished && currentPhase == 0) {
@@ -78,8 +111,8 @@ public:
         }
 
         if (
-            row >= rowCount ||
-            column >= columnCount
+            row >= shape[currentPhase].rows ||
+            column >= shape[currentPhase].columns
         ) {
             recordInvalid(
                 "Coordinates outside cube: " +
@@ -115,7 +148,7 @@ public:
 
         ++currentPhase;
 
-        if (currentPhase == phaseCount) {
+        if (currentPhase == shape.size()) {
             finished = true;
             endReason = "COMPLETED";
         } else {
@@ -234,7 +267,7 @@ public:
     std::vector<Measurement> measurements() const {
         std::vector<Measurement> result;
 
-        for (std::size_t phase = 0; phase < phaseCount; ++phase) {
+        for (std::size_t phase = 0; phase < sessions.size(); ++phase) {
             const auto& session = sessions[phase];
 
             if (session.visited && session.hasSelection) {
@@ -268,7 +301,7 @@ private:
     bool isActive() const {
         return
             !finished &&
-            currentPhase < phaseCount &&
+            currentPhase < sessions.size() &&
             sessions[currentPhase].visited;
     }
 };
