@@ -46,4 +46,14 @@ for phase in 1 2 3; do
   [ "$(code -H "$auth" -H 'Content-Type: application/json' -d "$conflict" "$base/evaluate")" = 409 ] || fail "changed selection must be 409"
 done
 
-echo "PASS: authenticated health; missing/wrong auth; invalid request; three phases with measurements; retry/conflict."
+# Cubo de usuario: 2 fases (1×2 y 10×10), posición fuera de la fase = 400, forma distinta en la misma sesión = 409.
+cid=$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12})$/\1-\2-\3-\4-\5/')
+custom() { echo "{\"scenarioId\":\"custom\",\"sessionId\":\"$cid\",\"shape\":$1,\"phase\":$2,\"decisions\":[{\"position\":$3,\"selected\":true,\"value\":1}]}"; }
+post() { curl -s -H "$auth" -H 'Content-Type: application/json' -d "$1" "$base/evaluate"; }
+[ "$(code -H "$auth" -H 'Content-Type: application/json' -d "$(custom '[[1,2],[10,10]]' 1 3)" "$base/evaluate")" = 400 ] || fail "position outside the phase must be 400"
+[ "$(code -H "$auth" -H 'Content-Type: application/json' -d "$(custom '[[1,11]]' 1 1)" "$base/evaluate")" = 400 ] || fail "dimension over 10 must be 400"
+case "$(post "$(custom '[[1,2],[10,10]]' 1 2)")" in *'"status":"phase-complete"'*) ;; *) fail "custom phase 1 rejected" ;; esac
+[ "$(code -H "$auth" -H 'Content-Type: application/json' -d "$(custom '[[1,2],[3,3]]' 2 1)" "$base/evaluate")" = 409 ] || fail "changed shape must be 409"
+case "$(post "$(custom '[[1,2],[10,10]]' 2 100)")" in *'"measurements":[{"phase":1,"row":1,"column":2},{"phase":2,"row":10,"column":10}]'*) ;; *) fail "custom completion measurements" ;; esac
+
+echo "PASS: authenticated health; missing/wrong auth; invalid request; three phases with measurements; retry/conflict; custom shapes."

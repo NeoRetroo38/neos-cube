@@ -150,7 +150,7 @@ class JsonReader {
         invalid();
     }
     Json value(unsigned depth) {
-        if (++nodes > 128 || depth > 5) invalid();
+        if (++nodes > 512 || depth > 5) invalid();
         spaces();
         if (offset == input.size()) invalid();
         if (take('{')) {
@@ -169,7 +169,7 @@ class JsonReader {
             Json result(Json::Array);
             if (take(']')) return result;
             do {
-                if (result.array.size() == 9) invalid();
+                if (result.array.size() == 100) invalid();  // hasta 10×10 decisiones por fase
                 result.array.push_back(value(depth + 1));
                 if (take(']')) return result;
             } while (take(','));
@@ -200,11 +200,26 @@ const Json& field(const Json& object, const char* key, Json::Kind kind) {
     if (object.kind != Json::Object || found == object.object.end() || found->second.kind != kind) invalid();
     return found->second;
 }
-struct Input { std::string sessionId; int phase; int position; };
+// shape vacío = choice-grid (3 fases de 3×3). «custom» trae su forma: [[filas, columnas], …] por fase.
+struct Input { std::string sessionId; int phase; int position; std::vector<scenarys::PhaseShape> shape; };
 Input validate(const std::string& body) {
     const auto root = JsonReader(body).read();
-    if (root.kind != Json::Object || root.object.size() != 4) invalid();
-    if (field(root, "scenarioId", Json::String).string != "choice-grid") invalid();
+    if (root.kind != Json::Object) invalid();
+    const auto& scenario = field(root, "scenarioId", Json::String).string;
+    std::vector<scenarys::PhaseShape> shape;
+    if (scenario == "choice-grid") {
+        if (root.object.size() != 4) invalid();
+    } else if (scenario == "custom") {
+        if (root.object.size() != 5) invalid();
+        for (const auto& phase : field(root, "shape", Json::Array).array) {
+            if (phase.kind != Json::Array || phase.array.size() != 2) invalid();
+            if (phase.array[0].kind != Json::Integer || phase.array[1].kind != Json::Integer) invalid();
+            shape.push_back({static_cast<std::size_t>(phase.array[0].integer), static_cast<std::size_t>(phase.array[1].integer)});
+        }
+        if (!scenarys::validShape(shape)) invalid();
+    } else {
+        invalid();
+    }
     auto session = lower(field(root, "sessionId", Json::String).string);
     if (session.size() != 36) invalid();
     for (std::size_t i = 0; i < session.size(); ++i) {
@@ -212,29 +227,34 @@ Input validate(const std::string& body) {
         else if (!((session[i] >= '0' && session[i] <= '9') || (session[i] >= 'a' && session[i] <= 'f'))) invalid();
     }
     const int phase = field(root, "phase", Json::Integer).integer;
-    if (phase < 1 || phase > 3) invalid();
+    const int phases = shape.empty() ? static_cast<int>(scenarys::phaseCount) : static_cast<int>(shape.size());
+    if (phase < 1 || phase > phases) invalid();
+    const int cells = shape.empty() ? static_cast<int>(scenarys::rowCount * scenarys::columnCount)
+                                    : static_cast<int>(shape[phase - 1].rows * shape[phase - 1].columns);
     const auto& decisions = field(root, "decisions", Json::Array).array;
     if (decisions.empty()) invalid();
-    std::array<bool, 9> seen{};
+    std::vector<bool> seen(static_cast<std::size_t>(cells), false);
     int selected = 0;
     for (const auto& decision : decisions) {
         if (decision.kind != Json::Object || decision.object.size() != 3) invalid();
         const int position = field(decision, "position", Json::Integer).integer;
         const bool active = field(decision, "selected", Json::Boolean).boolean;
         const int value = field(decision, "value", Json::Integer).integer;
-        if (position < 1 || position > 9 || seen[position - 1] || value != (active ? 1 : 0)) invalid();
+        if (position < 1 || position > cells || seen[position - 1] || value != (active ? 1 : 0)) invalid();
         seen[position - 1] = true;
         if (active) { if (selected != 0) invalid(); selected = position; }
     }
     if (selected == 0) invalid();
-    return {session, phase, selected};
+    return {session, phase, selected, shape};
 }
 
 struct LocalSession {
     scenarys::Run engine;
-    std::array<int, 3> accepted{};
-    std::array<std::string, 3> replies{};
+    std::vector<int> accepted;
+    std::vector<std::string> replies;
     Clock::time_point lastUsed = Clock::now();
+    explicit LocalSession(scenarys::Run run)
+        : engine(std::move(run)), accepted(engine.shape.size(), 0), replies(engine.shape.size()) {}
 };
 std::map<std::string, LocalSession> sessions;
 // Public DTO: only selections already stored by the engine, 1-based.
@@ -257,10 +277,14 @@ std::string evaluate(const Input& input) {
     if (existing == sessions.end()) {
         if (input.phase != 1) throw Failure{404, "SESSION_NOT_FOUND"};
         if (sessions.size() >= maxSessions) throw Failure{503, "SERVICE_BUSY"};
-        existing = sessions.emplace(input.sessionId, LocalSession{}).first;
+        existing = sessions.emplace(input.sessionId,
+            LocalSession(input.shape.empty() ? scenarys::Run() : scenarys::Run(input.shape))).first;
         existing->second.engine.start();
     }
     auto& state = existing->second;
+    // Una sesión no cambia de forma a mitad: la forma la fija la fase 1.
+    const auto expected = input.shape.empty() ? scenarys::defaultShape() : input.shape;
+    if (!(state.engine.shape == expected)) throw Failure{409, "SESSION_CONFLICT"};
     const auto slot = static_cast<std::size_t>(input.phase - 1);
     if (state.accepted[slot] != 0) {
         if (state.accepted[slot] != input.position) throw Failure{409, "SESSION_CONFLICT"};
@@ -269,7 +293,8 @@ std::string evaluate(const Input& input) {
     }
     if (state.engine.finished || state.engine.currentPhase + 1 != static_cast<std::size_t>(input.phase)) throw Failure{409, "SESSION_CONFLICT"};
     // Public grid position is input encoding only; all progression belongs to C++.
-    if (!state.engine.select((input.position - 1) / scenarys::columnCount, (input.position - 1) % scenarys::columnCount))
+    const auto columns = static_cast<int>(state.engine.shape[slot].columns);
+    if (!state.engine.select((input.position - 1) / columns, (input.position - 1) % columns))
         throw Failure{500, "INTERNAL_ERROR"};
     const bool complete = state.engine.finished;
     const std::string response = "{\"ok\":true,\"result\":{\"sessionId\":\"" + input.sessionId
