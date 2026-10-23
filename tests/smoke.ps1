@@ -31,6 +31,12 @@ foreach ($phase in 1..3) {
     $request.decisions[0].position = 9
     Expect-Rejection '/evaluate' 409 $authHeaders ($request | ConvertTo-Json -Depth 4 -Compress)
 }
+$corner = @(@{ phase = 1; row = 1; column = 1 }, @{ phase = 2; row = 1; column = 1 })
+$centre = @(@{ phase = 1; row = 2; column = 2 }, @{ phase = 2; row = 2; column = 2 })
+$compare = @{ shape = @(@(3, 3), @(3, 3)); reference = $corner; candidate = $centre } | ConvertTo-Json -Depth 4 -Compress
+$result = (Invoke-RestMethod "$baseUrl/compare" -Headers $authHeaders -Method Post -ContentType 'application/json' -Body $compare).result
+if ($result.similarity -ne 50.0 -or $result.phases.Count -ne 2) { throw 'Compare failed.' }
+Expect-Rejection '/compare' 400 $authHeaders (@{ shape = @(@(3, 3), @(3, 3)); reference = $corner; candidate = @($corner[0]) } | ConvertTo-Json -Depth 4 -Compress)
 $listeners = @(Get-NetTCPConnection -LocalPort 8765 -State Listen)
 if ($listeners.Count -ne 1 -or $listeners[0].LocalAddress -ne '127.0.0.1') { throw 'Unsafe listener.' }
 Write-Output 'PASS: authenticated health; missing/wrong auth; invalid request; three phases; retry/conflict; loopback only.'

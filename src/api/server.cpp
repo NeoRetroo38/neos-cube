@@ -308,6 +308,40 @@ std::string evaluate(const Input& input) {
     return response;
 }
 
+// /compare: {"shape":[[filas,columnas],…],"reference":[measurement…],"candidate":[measurement…]}. Sin estado.
+std::vector<scenarys::Measurement> measurementsOf(const Json& list) {
+    std::vector<scenarys::Measurement> result;
+    for (const auto& item : list.array) {
+        if (item.kind != Json::Object || item.object.size() != 3) invalid();
+        const int phase = field(item, "phase", Json::Integer).integer;
+        const int row = field(item, "row", Json::Integer).integer;
+        const int column = field(item, "column", Json::Integer).integer;
+        result.push_back({static_cast<std::size_t>(phase), static_cast<std::size_t>(row), static_cast<std::size_t>(column)});
+    }
+    return result;
+}
+std::string percent(std::size_t tenths) { return std::to_string(tenths / 10) + "." + std::to_string(tenths % 10); }
+std::string compareJson(const std::string& body) {
+    const auto root = JsonReader(body).read();
+    if (root.kind != Json::Object || root.object.size() != 3) invalid();
+    std::vector<scenarys::PhaseShape> shape;
+    for (const auto& phase : field(root, "shape", Json::Array).array) {
+        if (phase.kind != Json::Array || phase.array.size() != 2) invalid();
+        if (phase.array[0].kind != Json::Integer || phase.array[1].kind != Json::Integer) invalid();
+        shape.push_back({static_cast<std::size_t>(phase.array[0].integer), static_cast<std::size_t>(phase.array[1].integer)});
+    }
+    scenarys::Comparison result{0, {}};
+    try {
+        result = scenarys::compare(shape, measurementsOf(field(root, "reference", Json::Array)), measurementsOf(field(root, "candidate", Json::Array)));
+    } catch (const std::invalid_argument&) { invalid(); }
+    std::string phases = "[";
+    for (const auto& phase : result.phases) {
+        if (phases.size() > 1) phases += ',';
+        phases += "{\"phase\":" + std::to_string(phase.phase) + ",\"similarity\":" + percent(phase.tenths) + "}";
+    }
+    return "{\"ok\":true,\"result\":{\"similarity\":" + percent(result.tenths) + ",\"phases\":" + phases + "]}}";
+}
+
 void waitReady(Socket socket, bool write, Clock::time_point deadline) {
     const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - Clock::now()).count();
     if (remaining <= 0) throw Failure{408, "REQUEST_TIMEOUT"};
@@ -412,17 +446,17 @@ void connection(Socket socket, const std::string& token, std::ofstream& logs) {
     std::string body;
     try {
         auto request = headers(socket, start + requestDeadline);
-        if (request.endpoint == "/health" || request.endpoint == "/evaluate") endpoint = request.endpoint;
+        if (request.endpoint == "/health" || request.endpoint == "/evaluate" || request.endpoint == "/compare") endpoint = request.endpoint;
         authenticate(request, token);
         if (request.method == "GET" && request.endpoint == "/health") {
             if (request.length != 0) invalid();
             body = "{\"ok\":true,\"service\":\"neo-cube\",\"version\":\"0.1.0\"}";
-        } else if (request.method == "POST" && request.endpoint == "/evaluate") {
+        } else if (request.method == "POST" && (request.endpoint == "/evaluate" || request.endpoint == "/compare")) {
             if (request.length == 0 || !request.headers.count("content-type")) invalid();
             const auto type = lower(request.headers.at("content-type"));
             if (type != "application/json" && type != "application/json; charset=utf-8") invalid();
             while (request.body.size() < request.length) request.body += receive(socket, start + requestDeadline, request.length - request.body.size());
-            body = evaluate(validate(request.body));
+            body = request.endpoint == "/compare" ? compareJson(request.body) : evaluate(validate(request.body));
         } else throw Failure{404, "NOT_FOUND"};
     } catch (const Failure& error) { status = error.status; code = error.code; }
       catch (...) { status = 500; code = "INTERNAL_ERROR"; }
