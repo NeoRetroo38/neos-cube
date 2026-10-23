@@ -56,4 +56,10 @@ case "$(post "$(custom '[[1,2],[10,10]]' 1 2)")" in *'"status":"phase-complete"'
 [ "$(code -H "$auth" -H 'Content-Type: application/json' -d "$(custom '[[1,2],[3,3]]' 2 1)" "$base/evaluate")" = 409 ] || fail "changed shape must be 409"
 case "$(post "$(custom '[[1,2],[10,10]]' 2 100)")" in *'"measurements":[{"phase":1,"row":1,"column":2},{"phase":2,"row":10,"column":10}]'*) ;; *) fail "custom completion measurements" ;; esac
 
-echo "PASS: authenticated health; missing/wrong auth; invalid request; three phases with measurements; retry/conflict; custom shapes."
+# Comparación: idénticos 100.0, centro frente a esquina 50.0, run incompleto 400.
+cmp() { curl -s -H "$auth" -H 'Content-Type: application/json' -d "{\"shape\":[[3,3],[3,3]],\"reference\":[{\"phase\":1,\"row\":1,\"column\":1},{\"phase\":2,\"row\":1,\"column\":1}],\"candidate\":$1}" "$base/compare"; }
+[ "$(cmp '[{"phase":1,"row":1,"column":1},{"phase":2,"row":1,"column":1}]')" = '{"ok":true,"result":{"similarity":100.0,"phases":[{"phase":1,"similarity":100.0},{"phase":2,"similarity":100.0}]}}' ] || fail "identical compare"
+[ "$(cmp '[{"phase":1,"row":2,"column":2},{"phase":2,"row":2,"column":2}]')" = '{"ok":true,"result":{"similarity":50.0,"phases":[{"phase":1,"similarity":50.0},{"phase":2,"similarity":50.0}]}}' ] || fail "centre compare"
+case "$(cmp '[{"phase":1,"row":1,"column":1}]')" in *'"INVALID_REQUEST"'*) ;; *) fail "incomplete compare must be 400" ;; esac
+
+echo "PASS: compare; authenticated health; missing/wrong auth; invalid request; three phases with measurements; retry/conflict; custom shapes."

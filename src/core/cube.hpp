@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -305,5 +306,49 @@ private:
             sessions[currentPhase].visited;
     }
 };
+
+// Comparación de dos Runs completos del mismo cubo (cubos de referencia de choisys).
+// Fórmula y ejemplos: docs/COMPARISON.md. Resultado en décimas de punto: 0..1000 = 0,0..100,0 %.
+struct PhaseComparison {
+    std::size_t phase;
+    std::size_t tenths;
+};
+
+struct Comparison {
+    std::size_t tenths;
+    std::vector<PhaseComparison> phases;
+};
+
+inline bool completeFor(const std::vector<PhaseShape>& shape, const std::vector<Measurement>& run) {
+    if (run.size() != shape.size()) return false;
+    for (std::size_t i = 0; i < run.size(); ++i) {
+        if (run[i].phase != i + 1 || run[i].row < 1 || run[i].row > shape[i].rows
+            || run[i].column < 1 || run[i].column > shape[i].columns) return false;
+    }
+    return true;
+}
+
+// Cada fase es una cuadrícula de celdas unitarias; la distancia de fase es la euclídea entre las dos
+// selecciones dividida por la diagonal de esa cuadrícula (0 si es 1×1). Todas las fases pesan igual:
+// el modelo de cubo actual no define pesos. Determinista: sin estado, reloj ni azar.
+inline Comparison compare(const std::vector<PhaseShape>& shape, const std::vector<Measurement>& reference,
+                          const std::vector<Measurement>& candidate) {
+    if (!validShape(shape) || !completeFor(shape, reference) || !completeFor(shape, candidate))
+        throw std::invalid_argument("runs not comparable");
+    Comparison result{0, {}};
+    double total = 0;
+    for (std::size_t i = 0; i < shape.size(); ++i) {
+        const double rows = static_cast<double>(shape[i].rows - 1);
+        const double columns = static_cast<double>(shape[i].columns - 1);
+        const double diagonal = std::sqrt(rows * rows + columns * columns);
+        const double dr = static_cast<double>(reference[i].row) - static_cast<double>(candidate[i].row);
+        const double dc = static_cast<double>(reference[i].column) - static_cast<double>(candidate[i].column);
+        const double distance = diagonal == 0 ? 0 : std::sqrt(dr * dr + dc * dc) / diagonal;
+        total += distance;
+        result.phases.push_back({i + 1, static_cast<std::size_t>(std::lround(1000 * (1 - distance)))});
+    }
+    result.tenths = static_cast<std::size_t>(std::lround(1000 * (1 - total / static_cast<double>(shape.size()))));
+    return result;
+}
 
 } // namespace scenarys

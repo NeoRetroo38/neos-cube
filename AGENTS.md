@@ -14,11 +14,12 @@ El cliente de producto vive en el repo público `choisys`.
 ## Reglas cerradas
 
 1. **No inventes inferencia.** `docs/INFERENCE_ARCHITECTURE.md` manda: sin especificación matemática aprobada
-   (campos, algoritmo, regla de combinación, ejemplos) no se escribe ninguna fórmula.
+   (campos, algoritmo, regla de combinación, ejemplos) no se escribe ninguna fórmula. Excepción aprobada por
+   el dueño (23 oct): la comparación de dos Runs de `docs/COMPARISON.md` (`compare`, `POST /compare`).
 2. **Dominio no negativo.** Ausencia, fase no visitada y selección existente son estados distintos; ningún
    valor negativo como centinela.
 3. **Lo que sale del servicio es un DTO público aprobado.** Hoy: confirmación de fase y, al completar el
-   Run, `measurements: [{ phase, row, column }]` (base 1). No serialices la estructura privada completa
+   Run, `measurements: [{ phase, row, column }]` (base 1); y en `/compare`, `similarity` y `phases[].similarity`. No serialices la estructura privada completa
    ni expongas matrices, pesos, fórmulas, estados intermedios o trazas.
 4. **Resultado determinista** para la misma entrada y versión de escenario; sin red, reloj ni base de datos
    dentro del cálculo.
