@@ -6,7 +6,7 @@ CXX ?= c++
 CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wpedantic -O2
 BUILD := build
 
-.PHONY: all tests service test smoke clean
+.PHONY: all tests service test smoke cases clean
 
 all: tests service
 
@@ -24,6 +24,15 @@ $(BUILD)/neo-cube-service: src/api/server.cpp src/core/cube.hpp | $(BUILD)
 
 test: $(BUILD)/neo-cube-tests
 	./$(BUILD)/neo-cube-tests
+
+# Simulated populations for the choisys landing (docs/SIMULATED-CASES.md); same seed, same bytes.
+cases: $(BUILD)/simulate-cases
+	./$(BUILD)/simulate-cases > $(BUILD)/cases.json
+	./$(BUILD)/simulate-cases | cmp - $(BUILD)/cases.json
+	@echo "build/cases.json (deterministic)"
+
+$(BUILD)/simulate-cases: examples/simulate_cases.cpp src/core/cube.hpp | $(BUILD)
+	$(CXX) $(CXXFLAGS) examples/simulate_cases.cpp -o $@
 
 smoke: $(BUILD)/neo-cube-service
 	sh tests/smoke-posix.sh
