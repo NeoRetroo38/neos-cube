@@ -37,8 +37,12 @@ En la fase 3, la gama se inclina hacia la fila de presupuesto elegida (peso 1 ·
 hacia el formato (1 · 0,25 · 0,0625); si el uso es «deporte», el 60 % va directo a «deportivo».
 
 Salida: `funnel` (empiezan, tras fase 1, tras fase 2, completan), `counts` (elecciones por celda y fase),
-`after[f1 * 9 + f2]` (cuántos eligieron cada producto tras cada combinación de las fases 1 y 2) y `sample`
-(60 recorridos completos para dibujar).
+`after[f1 * 9 + f2]` (cuántos eligieron cada producto tras cada combinación de las fases 1 y 2), `afterN` y
+`sample` (60 recorridos completos para dibujar).
+
+Proporciones (también calculadas aquí, en % con una décima, redondeo de la mitad hacia arriba): `funnelShare`
+(sobre los que empiezan), `share[fase]` (sobre los que eligieron en esa fase) y `afterShare` (sobre `afterN`).
+Por el redondeo, una fila puede sumar 99,8–100,2.
 
 ## Caso 2 · Selección de personal (400 invitaciones)
 
@@ -53,7 +57,7 @@ centrado en sus celdas con un peso de vecindad (más alto = más disperso):
 | distinto | 30 % | (1,3) (1,1) (3,1) | 0,40 |
 | disperso | 15 % | centro en todas | 0,95 |
 
-Salida: `funnel` (invitados, abren, completan), `histogram` (similitud en tramos de 10 puntos),
+Salida: `funnel` y `funnelShare` (invitados, abren, completan), `histogram` (similitud en tramos de 10 puntos),
 `phaseMean` (similitud media por fase), y `ranking` (los 12 primeros, desempate por orden de invitación).
 
 La similitud mide proximidad dentro de la cuadrícula de este cubo. No mide a la persona ni sustituye la

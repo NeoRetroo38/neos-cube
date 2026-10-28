@@ -61,6 +61,16 @@ std::string measurementsJson(const std::vector<scenarys::Measurement>& run) {
 
 std::string tenths(std::size_t value) { return std::to_string(value / 10) + "." + std::to_string(value % 10); }
 
+// part / whole as a percentage with one decimal (half away from zero), computed here so the landing only prints it.
+std::size_t shareTenths(std::size_t part, std::size_t whole) { return whole == 0 ? 0 : (part * 2000 + whole) / (whole * 2); }
+
+template <std::size_t N>
+std::string shares(const std::array<std::size_t, N>& counts, std::size_t whole) {
+    std::string json = "[";
+    for (std::size_t i = 0; i < N; ++i) json += (i ? "," : "") + tenths(shareTenths(counts[i], whole));
+    return json + "]";
+}
+
 template <typename T, std::size_t N>
 std::string list(const std::array<T, N>& values) {
     std::string json = "[";
@@ -135,9 +145,23 @@ void productCase(std::mt19937& random, std::size_t people) {
     std::cout << "  \"product\": {\n    \"people\": " << people << ",\n    \"funnel\": " << list(reached)
               << ",\n    \"segmentsCompleted\": {";
     for (std::size_t s = 0; s < buyers.size(); ++s) std::cout << (s ? "," : "") << "\"" << buyers[s].id << "\":" << segmentCompleted[s];
-    std::cout << "},\n    \"counts\": [" << list(counts[0]) << "," << list(counts[1]) << "," << list(counts[2]) << "],\n"
+    std::cout << "},\n    \"funnelShare\": " << shares(reached, reached[0])
+              << ",\n    \"counts\": [" << list(counts[0]) << "," << list(counts[1]) << "," << list(counts[2]) << "],\n"
+              << "    \"share\": [" << shares(counts[0], reached[1]) << "," << shares(counts[1], reached[2]) << "," << shares(counts[2], reached[3]) << "],\n"
               << "    \"after\": [";
     for (std::size_t i = 0; i < after.size(); ++i) std::cout << (i ? "," : "") << list(after[i]);
+    std::cout << "],\n    \"afterN\": [";
+    for (std::size_t i = 0; i < after.size(); ++i) {
+        std::size_t n = 0;
+        for (const auto c : after[i]) n += c;
+        std::cout << (i ? "," : "") << n;
+    }
+    std::cout << "],\n    \"afterShare\": [";
+    for (std::size_t i = 0; i < after.size(); ++i) {
+        std::size_t n = 0;
+        for (const auto c : after[i]) n += c;
+        std::cout << (i ? "," : "") << shares(after[i], n);
+    }
     std::cout << "],\n    \"sample\": [";
     for (std::size_t i = 0; i < sample.size(); ++i) std::cout << (i ? "," : "") << sample[i];
     std::cout << "]\n  }";
@@ -206,7 +230,8 @@ void hiringCase(std::mt19937& random, std::size_t invited) {
         for (std::size_t j = i; j > 0 && results[order[j]].comparison.tenths > results[order[j - 1]].comparison.tenths; --j)
             std::swap(order[j], order[j - 1]);
 
-    std::cout << "  \"hiring\": {\n    \"funnel\": " << list(funnel) << ",\n    \"reference\": " << measurementsJson(reference)
+    std::cout << "  \"hiring\": {\n    \"funnel\": " << list(funnel) << ",\n    \"funnelShare\": " << shares(funnel, funnel[0])
+              << ",\n    \"reference\": " << measurementsJson(reference)
               << ",\n    \"histogram\": " << list(histogram) << ",\n    \"phaseMean\": [";
     for (std::size_t p = 0; p < 3; ++p)
         std::cout << (p ? "," : "") << tenths(results.empty() ? 0 : (phaseTotal[p] + results.size() / 2) / results.size());
